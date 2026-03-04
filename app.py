@@ -5,13 +5,17 @@ import os
 from PIL import Image
 
 # --- 基礎設置 ---
-st.set_page_config(page_title="Summer Body 2026 - 全方位教練", page_icon="🥗", layout="wide")
+st.set_page_config(page_title="Summer Body 2026 - 管理系統", page_icon="🛡️", layout="wide")
 
-# --- 數據模擬 ---
+# --- 設定管理員邀請碼 ---
+ADMIN_SECRET_KEY = "BOSS123" 
+
+# --- 數據處理 ---
 DATA_FILE = "user_data.csv"
+USER_DB = "users.csv" # 用來存帳號身分
 
-def save_data(username, bmi, tdee):
-    new_data = pd.DataFrame([[datetime.now().strftime("%Y-%m-%d"), username, bmi, tdee]], 
+def save_record(username, bmi, tdee):
+    new_data = pd.DataFrame([[datetime.now().strftime("%Y-%m-%d %H:%M"), username, bmi, tdee]], 
                             columns=["日期", "用戶", "BMI", "TDEE"])
     if os.path.exists(DATA_FILE):
         df = pd.read_csv(DATA_FILE)
@@ -20,90 +24,108 @@ def save_data(username, bmi, tdee):
         df = new_data
     df.to_csv(DATA_FILE, index=False)
 
-# --- 登入系統 ---
+# --- 登入與註冊邏輯 ---
 if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
 
 if not st.session_state.logged_in:
-    st.title("🌊 Summer Body 登入")
+    st.title("🌊 Summer Body 系統入口")
+    
+    choice = st.radio("選擇操作", ["登入", "新用戶註冊"])
+    
     user = st.text_input("用戶名")
     pw = st.text_input("密碼", type="password")
-    if st.button("進入私人中心"):
-        if user and pw:
-            st.session_state.logged_in = True
-            st.session_state.username = user
-            st.rerun()
+    
+    if choice == "新用戶註冊":
+        admin_code = st.text_input("管理員邀請碼 (普通用戶請留空)", type="password")
+        if st.button("完成註冊"):
+            if user and pw:
+                role = "admin" if admin_code == ADMIN_SECRET_KEY else "user"
+                new_user = pd.DataFrame([[user, pw, role]], columns=['username', 'password', 'role'])
+                if os.path.exists(USER_DB):
+                    udf = pd.read_csv(USER_DB)
+                    if user in udf['username'].values:
+                        st.error("該用戶名已被佔用")
+                    else:
+                        pd.concat([udf, new_user]).to_csv(USER_DB, index=False)
+                        st.success(f"註冊成功！身分：{role}")
+                else:
+                    new_user.to_csv(USER_DB, index=False)
+                    st.success(f"註冊成功！身分：{role}")
+            else:
+                st.warning("請填寫帳號密碼")
+                
+    else: # 登入邏輯
+        if st.button("立即進入"):
+            if os.path.exists(USER_DB):
+                udf = pd.read_csv(USER_DB)
+                match = udf[(udf['username'] == user) & (udf['password'] == pw)]
+                if not match.empty:
+                    st.session_state.logged_in = True
+                    st.session_state.username = user
+                    st.session_state.role = match.iloc[0]['role']
+                    st.rerun()
+                else:
+                    st.error("帳號或密碼錯誤")
+            else:
+                st.error("目前尚無任何帳號，請先註冊")
+
 else:
-    # --- 側邊欄 ---
+    # --- 登入後介面 ---
     st.sidebar.title(f"👤 {st.session_state.username}")
-    if st.sidebar.button("登出"):
+    st.sidebar.info(f"權限層級：{st.session_state.role.upper()}")
+    if st.sidebar.button("安全登出"):
         st.session_state.logged_in = False
         st.rerun()
 
-    # --- 主頁面標題 ---
-    st.title(f"☀️ {st.session_state.username} 的夏季強化日誌")
+    # 定義分頁 (根據身分決定要不要顯示管理員分頁)
+    tabs_list = ["📊 體態追蹤", "🥗 飲食建議", "📅 夏季作息"]
+    if st.session_state.role == "admin":
+        tabs_list.append("🔑 管理員後台")
     
-    # 建立分頁
-    tab1, tab2, tab3 = st.tabs(["📊 體態追蹤", "🥗 飲食建議", "📅 夏季作息"])
+    tabs = st.tabs(tabs_list)
 
-    with tab1:
-        st.subheader("今日進度上傳")
-        uploaded_file = st.file_uploader("上傳今日體態照", type=["jpg", "png"])
-        if uploaded_file:
-            st.image(Image.open(uploaded_file), width=300)
-            st.success("照片已預覽！")
-
-        st.divider()
+    # --- Tab 1: 體態追蹤 ---
+    with tabs[0]:
+        st.subheader("我的進度紀錄")
+        h = st.number_input("身高 (cm)", value=165.0)
+        w = st.number_input("體重 (kg)", value=55.0)
+        age = st.number_input("年齡", value=25)
+        mult = st.selectbox("活動強度", [1.2, 1.375, 1.55, 1.725])
         
-        col1, col2 = st.columns(2)
-        with col1:
-            h = st.number_input("身高 (cm)", value=170.0)
-            w = st.number_input("體重 (kg)", value=60.0)
-        with col2:
-            age = st.number_input("年齡", value=25)
-            mult = st.selectbox("夏季活動強度", [1.2, 1.375, 1.55, 1.725])
-
-        if st.button("計算數據並儲存"):
+        if st.button("計算並儲存"):
             bmi = w / ((h/100)**2)
-            tdee = (10 * w + 6.25 * h - 5 * age + 5) * mult
-            st.session_state.last_tdee = tdee # 暫存用於飲食建議
-            save_data(st.session_state.username, bmi, tdee)
-            st.balloons()
-            st.metric("您的 TDEE", f"{tdee:.0f} kcal")
-            st.info(f"💡 建議每日攝取: {tdee-500:.0f} kcal (減脂期)")
+            # 女性 BMR 計算公式
+            bmr = (10 * w) + (6.25 * h) - (5 * age) - 161
+            tdee = bmr * mult
+            st.session_state.last_tdee = tdee
+            save_record(st.session_state.username, bmi, tdee)
+            st.success(f"已儲存！您的 BMI: {bmi:.2f}")
+            st.metric("TDEE 消耗", f"{tdee:.0f} kcal")
 
-    with tab2:
-        st.subheader("🍴 推薦食材清單")
-        target_cal = st.session_state.get('last_tdee', 2000) - 500
-        
-        st.write(f"針對您的目標熱量 **{target_cal:.0f} kcal**，建議採購：")
-        
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            st.markdown("### 🥩 優質蛋白\n- 雞胸肉\n- 鯛魚片\n- 雞蛋\n- 希臘優格")
-        with c2:
-            st.markdown("### 🍠 低GI澱粉\n- 地瓜\n- 糙米\n- 燕麥\n- 南瓜")
-        with c3:
-            st.markdown("### 🥒 夏季蔬菜\n- 小黃瓜 (消暑)\n- 番茄\n- 綠花椰菜\n- 冬瓜 (利尿)")
-            
-        st.warning("⚠️ 提醒：夏天容易沒食欲，建議少量多餐，並確保補足蛋白質。")
+    # --- Tab 2: 飲食建議 ---
+    with tabs[1]:
+        st.subheader("客製化飲食清單")
+        target = st.session_state.get('last_tdee', 1800)
+        st.write(f"目前建議每日攝取：**{target-400:.0f} kcal**")
+        st.markdown("- 🥩 **蛋白質**：雞肉、豆腐、海鮮\n- 🥦 **纖維**：小黃瓜、花椰菜\n- 🍠 **澱粉**：地瓜、糙米")
 
-    with tab3:
-        st.subheader("⏰ 建議夏季作息表")
-        
-        routine = {
-            "07:00": "起床 + 飲水 500ml (啟動代謝)",
-            "07:30": "晨間伸展或室外快走 (避開高溫)",
-            "08:30": "高蛋白早餐",
-            "12:00": "原型食物午餐 (多吃消暑蔬菜)",
-            "15:00": "補充水分 + 一小份水果",
-            "18:00": "晚餐 (減少澱粉比例)",
-            "20:00": "室內運動 / 力量訓練",
-            "22:30": "放下手機，準備就寢",
-            "23:00": "進入深度睡眠 (生長激素分泌)"
-        }
-        
-        for time, task in routine.items():
-            st.write(f"**{time}** : {task}")
-        
-        st.info("💡 貼心提醒：夏天排汗量大，作息中請隨時補充水分，每天建議飲水量為：體重 x 40ml")
+    # --- Tab 3: 夏季作息 ---
+    with tabs[2]:
+        st.subheader("建議作息表")
+        st.write("- **07:00** 起床飲水\n- **12:30** 清淡午餐\n- **20:00** 居家運動\n- **23:00** 美容睡眠")
+
+    # --- 管理員專屬 Tab ---
+    if st.session_state.role == "admin":
+        with tabs[3]:
+            st.header("🔑 管理員數據中心")
+            if os.path.exists(DATA_FILE):
+                all_records = pd.read_csv(DATA_FILE)
+                st.subheader("📋 全體用戶詳細紀錄")
+                st.dataframe(all_records, use_container_width=True)
+                
+                # 下載按鈕
+                csv_data = all_records.to_csv(index=False).encode('utf-8')
+                st.download_button("下載數據報表 (CSV)", data=csv_data, file_name="user_data.csv")
+            else:
+                st.info("目前尚無量測數據。")
